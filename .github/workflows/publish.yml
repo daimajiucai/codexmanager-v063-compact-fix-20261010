@@ -1,0 +1,92 @@
+name: Publish the verified CodexManager image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: publish-v063-compact-fix
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_REPO: ${{ github.repository }}
+      SOURCE_RUN: '38037757233'
+      SOURCE_HEAD: '097a035b21dea7a66b846a3b61966a4e644b37f8'
+      RELEASE_TAG: v0.6.3-compact-fix
+    steps:
+      - name: Check out release instructions only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify that the exact source build succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN" > /tmp/source-run.json
+          python3 - <<'PY'
+          import json, os
+          with open('/tmp/source-run.json') as f: run=json.load(f)
+          assert run['status'] == 'completed' and run['conclusion'] == 'success'
+          assert run['head_sha'] == os.environ['SOURCE_HEAD']
+          assert run['repository']['full_name'] == os.environ['GH_REPO']
+          assert run['path'] == '.github/workflows/build.yml'
+          print('Pinned, successful source build verified.')
+          PY
+      - name: Download only the previously verified image artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codexmanager-service-0.6.3-compact-fix-linux-amd64
+          path: release-files
+          github-token: ${{ github.token }}
+          run-id: '38037757233'
+      - name: Recheck hashes and the actual Docker image before publication
+        run: |
+          cd release-files
+          sha256sum -c SHA256SUMS
+          docker load -i codexmanager-service-0.6.3-compact-fix-linux-amd64.tar.gz
+          python3 - <<'PY'
+          import json, subprocess
+          with open('BUILD-METADATA.json') as f: meta=json.load(f)
+          with open('TEST-RESULTS.json') as f: report=json.load(f)
+          assert meta['upstream_source_commit'] == '764531421428e35b0fbb3aab8f4f777887e7a44a'
+          assert meta['base_image'] == 'ghcr.io/qxcnm/codexmanager-service@sha256:3bf5b865abe76ca2da828d82ecd5d31c20f497b9f9c67449790b5bf60270d26f'
+          assert meta['runtime_config_matches_base'] is True
+          assert meta['isolated_startup'].startswith('passed;')
+          assert meta['platform'] == 'linux/amd64'
+          assert report == meta['rust_tests']
+          assert report['verification'].startswith('passed;') and report['patch_tests_passed'] == 13
+          assert len(report['baseline_reproduced_failures']) == 4
+          assert report['baseline']['failed'] == report['patched']['failed'] == 4
+          assert report['baseline']['ignored'] == report['patched']['ignored']
+          assert report['patched']['passed'] == report['baseline']['passed'] + 13
+          image=json.loads(subprocess.check_output(['docker','image','inspect',meta['image']],text=True))[0]
+          assert image['Id'] == meta['image_id']
+          assert (image['Os'],image['Architecture']) == ('linux','amd64')
+          print('Publish verification passed. Image ID:', image['Id'])
+          print('Rust baseline:',report['baseline'],'patched:',report['patched'])
+          PY
+      - name: Publish public download assets without replacing any existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to replace or overwrite assets.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GH_REPO" --target "$SOURCE_HEAD" --latest=false \
+            --title 'CodexManager 0.6.3 compact hotfix — linux/amd64' \
+            --notes-file RELEASE-NOTES.md \
+            release-files/codexmanager-service-0.6.3-compact-fix-linux-amd64.tar.gz \
+            release-files/BUILD-METADATA.json release-files/TEST-RESULTS.json \
+            release-files/INSTALL.md release-files/SHA256SUMS
