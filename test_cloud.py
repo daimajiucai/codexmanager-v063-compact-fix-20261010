@@ -40,7 +40,12 @@ elif a[:2] == ['image', 'inspect']:
     print(json.dumps([dict(Id='sha256:base' if is_base else 'sha256:patched', Os='linux',
         Architecture='amd64' if is_base else os.environ.get('FAKE_ARCH','amd64'), Config=config)]))
 elif a[0] == 'run':
-    print('synthetic-isolated-container')
+    if '--entrypoint' in a:
+        print(json.dumps(dict(patch_tests_passed=0 if os.environ.get('FAKE_BAD_REPORT') else 13,
+                              verification='passed; synthetic fixture',
+                              baseline_reproduced_failures=['synthetic upstream failure'])))
+    else:
+        print('synthetic-isolated-container')
 elif a[0] == 'exec':
     sys.exit(int(os.environ.get('FAKE_HEALTH_EXIT', '0')))
 elif a[:2] == ['image', 'save']:
@@ -107,6 +112,12 @@ elif a[:2] == ['image', 'save']:
         self.assertNotIn("['image', 'save'", calls)
         self.assertIn("['rm', '-f', 'synthetic-isolated-container']", calls)
         self.assertNotIn("['stop'", calls)
+
+    def test_unverified_test_report_is_refused(self):
+        result, calls = self.run_build(FAKE_BAD_REPORT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("'--detach'", calls)
+        self.assertNotIn("['image', 'save'", calls)
 
     def test_existing_results_are_not_overwritten(self):
         (self.root/'dist').mkdir()

@@ -34,10 +34,17 @@ for key in ('Env', 'User', 'Cmd', 'Entrypoint', 'WorkingDir', 'Healthcheck',
         raise SystemExit('Refusing changed runtime configuration: ' + key)
 if (patched['Os'], patched['Architecture']) != ('linux', 'amd64'):
     raise SystemExit('Refusing incompatible image architecture')
+report_text = subprocess.check_output(['docker', 'run', '--rm', '--platform', 'linux/amd64',
+    '--network', 'none', '--entrypoint', 'cat', patched_name,
+    '/usr/local/share/codexmanager-hotfix/TEST-RESULTS.json'], text=True)
+test_report=json.loads(report_text)
+if test_report.get('patch_tests_passed') != 13 or not test_report.get('verification', '').startswith('passed;'):
+    raise SystemExit('Refusing unverified Rust test report')
+with open('dist/TEST-RESULTS.json', 'w') as f: f.write(report_text)
 metadata = dict(base_image=base_name, base_image_id=base['Id'], image=patched_name,
                 image_id=patched['Id'], platform='linux/amd64', upstream_version='0.6.3',
                 upstream_source_commit=commit, runtime_config_matches_base=True,
-                rust_tests='passed during Docker build', isolated_startup='pending',
+                rust_tests=test_report, isolated_startup='pending',
                 live_upstream_compaction='not tested')
 with open('dist/BUILD-METADATA.json', 'w') as f:
     json.dump(metadata, f, indent=2); f.write('\n')
@@ -79,5 +86,5 @@ with open(p,'w') as f: json.dump(metadata,f,indent=2); f.write('\n')
 PY
 docker image save "$patched" | gzip -1 > "dist/$archive"
 cp INSTALL.md dist/INSTALL.md
-(cd dist && sha256sum "$archive" BUILD-METADATA.json INSTALL.md > SHA256SUMS)
+(cd dist && sha256sum "$archive" BUILD-METADATA.json INSTALL.md TEST-RESULTS.json > SHA256SUMS)
 printf '\nBUILD SUCCEEDED: %s\nArchive: dist/%s\n' "$patched" "$archive"

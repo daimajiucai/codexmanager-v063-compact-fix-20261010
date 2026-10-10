@@ -30,6 +30,7 @@ jobs:
         run: |
           python3 test_patch.py
           python3 test_cloud.py
+          python3 test_rust_validation.py
       - name: Compile, run Rust tests, compare runtime config, and verify startup
         env:
           DOCKER_BUILDKIT: '1'

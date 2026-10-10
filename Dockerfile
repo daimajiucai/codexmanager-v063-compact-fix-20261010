@@ -12,15 +12,15 @@ RUN apt-get update \
 RUN git clone --depth 1 --branch v0.6.3 https://github.com/qxcnm/Codex-Manager.git /src \
     && test "$(git rev-parse HEAD)" = "$UPSTREAM_SOURCE_COMMIT" \
     && git rev-parse HEAD > /upstream-commit.txt
-COPY apply_patch.py web_search_history.rs /hotfix/
-RUN python3 /hotfix/apply_patch.py /src && git diff --check && git diff --stat
-RUN CARGO_BUILD_JOBS=$BUILD_JOBS cargo test --locked -p codexmanager-service -- --test-threads=1
+COPY apply_patch.py web_search_history.rs validate_rust.py /hotfix/
+RUN BUILD_JOBS=$BUILD_JOBS python3 /hotfix/validate_rust.py /src /validation
 RUN CARGO_BUILD_JOBS=$BUILD_JOBS cargo build --locked -p codexmanager-service --release
 
 FROM ${UPSTREAM_RUNTIME}
 COPY --from=builder /src/target/release/codexmanager-service /usr/local/bin/codexmanager-service
 COPY --from=builder /upstream-commit.txt /usr/local/share/codexmanager-hotfix/upstream-commit.txt
 COPY --from=builder /src/LICENSE /usr/local/share/codexmanager-hotfix/UPSTREAM-LICENSE
+COPY --from=builder /validation/TEST-RESULTS.json /usr/local/share/codexmanager-hotfix/TEST-RESULTS.json
 LABEL io.codexmanager.hotfix.base-version="0.6.3" \
       io.codexmanager.hotfix.name="web-search-history-declaration" \
       io.codexmanager.hotfix.source-commit="764531421428e35b0fbb3aab8f4f777887e7a44a" \
